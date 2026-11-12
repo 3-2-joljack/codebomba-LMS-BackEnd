@@ -1,19 +1,15 @@
 package com.wanted.codebombalms.lecture.infrastructure.storage;
 
-import com.google.cloud.storage.BlobId;
-import com.google.cloud.storage.BlobInfo;
-import com.google.cloud.storage.Storage;
 import com.wanted.codebombalms.global.domain.common.error.exception.ExternalServiceException;
 import com.wanted.codebombalms.global.domain.common.error.exception.ValidationException;
-import com.wanted.codebombalms.global.infrastructure.storage.GcpStorageClientFactory;
-import com.wanted.codebombalms.global.infrastructure.storage.GcpStorageProperties;
+import com.wanted.codebombalms.global.infrastructure.storage.ObjectStorage;
+import com.wanted.codebombalms.global.infrastructure.storage.ObjectStorageProperties;
 import com.wanted.codebombalms.lecture.application.port.LectureMaterialStoragePort;
 import com.wanted.codebombalms.lecture.domain.exception.LectureErrorCode;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ContentDisposition;
@@ -22,10 +18,10 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class GcsLectureMaterialStorageAdapter implements LectureMaterialStoragePort {
+public class S3LectureMaterialStorageAdapter implements LectureMaterialStoragePort {
 
     private static final long MAX_FILE_SIZE = 20 * 1024 * 1024;
-    private static final long DOWNLOAD_URL_DURATION_MINUTES = 1;
+    private static final Duration DOWNLOAD_URL_DURATION = Duration.ofMinutes(1);
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "application/pdf",
             "application/vnd.ms-powerpoint",
@@ -37,9 +33,8 @@ public class GcsLectureMaterialStorageAdapter implements LectureMaterialStorageP
             "application/zip"
     );
 
-    private final GcpStorageProperties properties;
-    private final GcpStorageClientFactory storageClientFactory;
-    private volatile Storage storage;
+    private final ObjectStorageProperties properties;
+    private final ObjectStorage objectStorage;
 
     @Override
     public StoredLectureMaterial upload(
@@ -52,16 +47,13 @@ public class GcsLectureMaterialStorageAdapter implements LectureMaterialStorageP
 
         String sanitizedFileName = sanitizeFileName(originalFileName);
         String storedFileName = UUID.randomUUID() + "_" + sanitizedFileName;
-        String objectName = buildObjectName(storedFileName);
-
-        BlobInfo blobInfo = BlobInfo.newBuilder(
-                        BlobId.of(properties.getStorage().getBucket(), objectName)
-                )
-                .setContentType(contentType)
-                .build();
+        String objectName = ObjectStorageProperties.objectKey(
+                properties.getLectureMaterialPrefix(),
+                storedFileName
+        );
 
         try {
-            getStorage().create(blobInfo, content);
+            objectStorage.put(objectName, contentType, content);
             return new StoredLectureMaterial(
                     originalFileName,
                     storedFileName,
@@ -84,7 +76,7 @@ public class GcsLectureMaterialStorageAdapter implements LectureMaterialStorageP
         }
 
         try {
-            getStorage().delete(BlobId.of(properties.getStorage().getBucket(), filePath));
+            objectStorage.delete(filePath);
         } catch (Exception e) {
             throw new ExternalServiceException(
                     LectureErrorCode.LECTURE_MATERIAL_DELETE_FAILED,
@@ -106,23 +98,11 @@ public class GcsLectureMaterialStorageAdapter implements LectureMaterialStorageP
                 .toString();
 
         try {
-            BlobInfo blobInfo = BlobInfo.newBuilder(
-                    properties.getStorage().getBucket(),
-                    filePath
-            ).build();
-
-            return getStorage()
-                    .signUrl(
-                            blobInfo,
-                            DOWNLOAD_URL_DURATION_MINUTES,
-                            TimeUnit.MINUTES,
-                            Storage.SignUrlOption.withV4Signature(),
-                            Storage.SignUrlOption.withQueryParams(Map.of(
-                                    "response-content-disposition",
-                                    contentDisposition
-                            ))
-                    )
-                    .toString();
+            return objectStorage.presignedDownloadUrl(
+                    filePath,
+                    DOWNLOAD_URL_DURATION,
+                    contentDisposition
+            );
         } catch (Exception e) {
             throw new ExternalServiceException(
                     LectureErrorCode.LECTURE_MATERIAL_DOWNLOAD_URL_FAILED,
@@ -152,48 +132,10 @@ public class GcsLectureMaterialStorageAdapter implements LectureMaterialStorageP
         }
     }
 
-    private String buildObjectName(String storedFileName) {
-        String prefix = normalizePrefix(properties.getStorage().getLectureMaterialPrefix());
-        if (prefix.isBlank()) {
-            return storedFileName;
-        }
-        return prefix + "/" + storedFileName;
-    }
-
-    private String normalizePrefix(String prefix) {
-        if (prefix == null) {
-            return "";
-        }
-        return prefix.replaceAll("^/+", "").replaceAll("/+$", "");
-    }
-
     private String sanitizeFileName(String originalFileName) {
         return originalFileName
                 .replace("\\", "_")
                 .replace("/", "_")
                 .replaceAll("[^a-zA-Z0-9._-]", "_");
     }
-
-    private Storage getStorage() {
-        if (storage == null) {
-            synchronized (this) {
-                if (storage == null) {
-                    storage = createStorage();
-                }
-            }
-        }
-        return storage;
-    }
-
-    private Storage createStorage() {
-        try {
-            return storageClientFactory.create();
-        } catch (Exception e) {
-            throw new ExternalServiceException(
-                    LectureErrorCode.LECTURE_MATERIAL_UPLOAD_FAILED,
-                    e
-            );
-        }
-    }
-
 }

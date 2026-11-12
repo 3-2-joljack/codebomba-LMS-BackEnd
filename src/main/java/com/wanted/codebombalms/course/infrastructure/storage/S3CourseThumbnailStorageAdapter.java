@@ -1,24 +1,17 @@
 package com.wanted.codebombalms.course.infrastructure.storage;
 
-import com.google.cloud.storage.BlobId;
-import com.google.cloud.storage.BlobInfo;
-import com.google.cloud.storage.Storage;
 import com.wanted.codebombalms.course.application.port.CourseThumbnailStoragePort;
 import com.wanted.codebombalms.course.domain.exception.CourseErrorCode;
 import com.wanted.codebombalms.global.domain.common.error.exception.ExternalServiceException;
 import com.wanted.codebombalms.global.domain.common.error.exception.ValidationException;
-import com.wanted.codebombalms.global.infrastructure.storage.GcpStorageClientFactory;
-import com.wanted.codebombalms.global.infrastructure.storage.GcpStorageProperties;
-import java.net.URI;
-import java.net.URLDecoder;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
+import com.wanted.codebombalms.global.infrastructure.storage.ObjectStorage;
+import com.wanted.codebombalms.global.infrastructure.storage.ObjectStorageProperties;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 
 @Component
-public class GcsCourseThumbnailStorageAdapter implements CourseThumbnailStoragePort {
+public class S3CourseThumbnailStorageAdapter implements CourseThumbnailStoragePort {
 
     private static final long MAX_FILE_SIZE = 5 * 1024 * 1024;
 
@@ -28,17 +21,15 @@ public class GcsCourseThumbnailStorageAdapter implements CourseThumbnailStorageP
             "image/webp"
     );
 
-    private final GcpStorageProperties properties;
-    private final GcpStorageClientFactory storageClientFactory;
+    private final ObjectStorageProperties properties;
+    private final ObjectStorage objectStorage;
 
-    private volatile Storage storage;
-
-    public GcsCourseThumbnailStorageAdapter(
-            GcpStorageProperties properties,
-            GcpStorageClientFactory storageClientFactory
+    public S3CourseThumbnailStorageAdapter(
+            ObjectStorageProperties properties,
+            ObjectStorage objectStorage
     ) {
         this.properties = properties;
-        this.storageClientFactory = storageClientFactory;
+        this.objectStorage = objectStorage;
     }
 
     @Override
@@ -56,26 +47,20 @@ public class GcsCourseThumbnailStorageAdapter implements CourseThumbnailStorageP
         );
 
         String sanitizedFileName = sanitizeFileName(originalFileName);
-        String objectName = buildObjectName(UUID.randomUUID() + "-" + sanitizedFileName);
-
-        BlobInfo blobInfo = BlobInfo.newBuilder(
-                        BlobId.of(
-                                properties.getStorage().getBucket(),
-                                objectName
-                        )
-                )
-                .setContentType(contentType)
-                .build();
+        String objectName = ObjectStorageProperties.objectKey(
+                properties.getCourseThumbnailPrefix(),
+                UUID.randomUUID() + "-" + sanitizedFileName
+        );
 
         try {
-            getStorage().create(blobInfo, imageBytes);
+            objectStorage.put(objectName, contentType, imageBytes);
 
             return new StoredCourseThumbnail(
                     sanitizedFileName,
                     objectName,
                     contentType,
                     fileSize,
-                    buildPublicUrl(objectName)
+                    objectStorage.publicUrl(objectName)
             );
         } catch (Exception e) {
             throw new ExternalServiceException(
@@ -93,12 +78,7 @@ public class GcsCourseThumbnailStorageAdapter implements CourseThumbnailStorageP
         }
 
         try {
-            getStorage().delete(
-                    BlobId.of(
-                            properties.getStorage().getBucket(),
-                            objectName
-                    )
-            );
+            objectStorage.delete(objectName);
         } catch (Exception e) {
             throw new ExternalServiceException(
                     CourseErrorCode.COURSE_THUMBNAIL_DELETE_FAILED,
@@ -107,35 +87,21 @@ public class GcsCourseThumbnailStorageAdapter implements CourseThumbnailStorageP
         }
     }
 
+    /** 이 버킷의 썸네일 prefix 아래 객체일 때만 키를 돌려준다. */
     private String extractObjectName(String thumbnailUrl) {
-        if (thumbnailUrl == null || thumbnailUrl.isBlank()) {
+        String objectName = objectStorage.keyFromPublicUrl(thumbnailUrl);
+        if (objectName == null) {
             return null;
         }
 
-        try {
-            URI uri = URI.create(thumbnailUrl);
-            String expectedHost = "storage.googleapis.com";
-            String bucket = properties.getStorage().getBucket();
-            String path = uri.getPath();
-            String bucketPrefix = "/" + bucket + "/";
-
-            if (!expectedHost.equals(uri.getHost()) || path == null || !path.startsWith(bucketPrefix)) {
-                return null;
-            }
-
-            String objectName = URLDecoder.decode(
-                    path.substring(bucketPrefix.length()),
-                    StandardCharsets.UTF_8
-            );
-            String thumbnailPrefix = normalizePrefix(properties.getStorage().getCourseThumbnailPrefix());
-            if (!thumbnailPrefix.isBlank() && !objectName.startsWith(thumbnailPrefix + "/")) {
-                return null;
-            }
-
-            return objectName;
-        } catch (IllegalArgumentException e) {
+        String thumbnailPrefix = ObjectStorageProperties.normalizePrefix(
+                properties.getCourseThumbnailPrefix()
+        );
+        if (!thumbnailPrefix.isBlank() && !objectName.startsWith(thumbnailPrefix + "/")) {
             return null;
         }
+
+        return objectName;
     }
 
     private void validateImage(
@@ -225,68 +191,10 @@ public class GcsCourseThumbnailStorageAdapter implements CourseThumbnailStorageP
         return true;
     }
 
-    private String buildObjectName(String fileName) {
-        String prefix = normalizePrefix(
-                properties.getStorage().getCourseThumbnailPrefix()
-        );
-
-        if (prefix.isBlank()) {
-            return fileName;
-        }
-
-        return prefix + "/" + fileName;
-    }
-
-    private String normalizePrefix(String prefix) {
-        if (prefix == null) {
-            return "";
-        }
-
-        return prefix
-                .replaceAll("^/+", "")
-                .replaceAll("/+$", "");
-    }
-
     private String sanitizeFileName(String originalFileName) {
         return originalFileName
                 .replace("\\", "_")
                 .replace("/", "_")
                 .replaceAll("[^a-zA-Z0-9._-]", "_");
     }
-
-    private String buildPublicUrl(String objectName) {
-        String encodedObjectName = URLEncoder.encode(
-                objectName,
-                StandardCharsets.UTF_8
-        ).replace("+", "%20").replace("%2F", "/");
-
-        return "https://storage.googleapis.com/"
-                + properties.getStorage().getBucket()
-                + "/"
-                + encodedObjectName;
-    }
-
-    private Storage getStorage() {
-        if (storage == null) {
-            synchronized (this) {
-                if (storage == null) {
-                    storage = createStorage();
-                }
-            }
-        }
-
-        return storage;
-    }
-
-    private Storage createStorage() {
-        try {
-            return storageClientFactory.create();
-        } catch (Exception e) {
-            throw new ExternalServiceException(
-                    CourseErrorCode.COURSE_THUMBNAIL_UPLOAD_FAILED,
-                    e
-            );
-        }
-    }
-
 }

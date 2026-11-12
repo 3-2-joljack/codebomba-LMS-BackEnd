@@ -113,14 +113,14 @@ learning:
 chat:
   max-history-messages: 20
 
-gcp:
-  project-id: ${GCP_PROJECT_ID:project-9eb65e0d-55b9-4a40-878}
-  storage:
-    bucket: ${GCP_STORAGE_BUCKET:codebombalms}
-    dataset-prefix: ${GCP_STORAGE_DATASET_PREFIX:problem_dataset}
-    badge-image-prefix: ${GCP_BADGE_IMAGE_PREFIX:badge_image}
-    course-thumbnail-prefix: ${GCP_COURSE_THUMBNAIL_PREFIX:course_thumbnail_images}
-    lecture-material-prefix: ${GCP_STORAGE_LECTURE_MATERIAL_PREFIX:lecture_materials}
+# 파일 저장소 — AWS S3. 자격 증명은 SDK 기본 체인(EC2 인스턴스 역할 등)을 따른다.
+storage:
+  bucket: ${S3_BUCKET:codebomba-lms}
+  region: ${AWS_REGION:ap-northeast-2}
+  dataset-prefix: ${STORAGE_DATASET_PREFIX:problem_dataset}
+  badge-image-prefix: ${STORAGE_BADGE_IMAGE_PREFIX:badge_image}
+  course-thumbnail-prefix: ${STORAGE_COURSE_THUMBNAIL_PREFIX:course_thumbnail_images}
+  lecture-material-prefix: ${STORAGE_LECTURE_MATERIAL_PREFIX:lecture_materials}
 
 code-runner:
   type: cloud-run

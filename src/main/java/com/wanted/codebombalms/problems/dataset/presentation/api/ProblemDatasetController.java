@@ -39,7 +39,7 @@ public class ProblemDatasetController {
 
     @Operation(
             summary = "데이터셋 단독 업로드",
-            description = "CSV 데이터셋 파일을 GCS에 업로드합니다. 문제 세트 등록과 동시에 연결하려면 /api/v1/problems/with-dataset API를 사용합니다."
+            description = "CSV 데이터셋 파일을 S3에 업로드합니다. 문제 세트 등록과 동시에 연결하려면 /api/v1/problems/with-dataset API를 사용합니다."
     )
     @io.swagger.v3.oas.annotations.responses.ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(
@@ -163,7 +163,7 @@ public class ProblemDatasetController {
                                           "message": "데이터셋 다운로드 URL이 발급되었습니다.",
                                           "data": {
                                             "fileName": "employee_performance.csv",
-                                            "downloadUrl": "https://storage.googleapis.com/codebombalms/problem_dataset/example.csv?X-Goog-Signature=example"
+                                            "downloadUrl": "https://codebomba-lms.s3.ap-northeast-2.amazonaws.com/problem_dataset/example.csv?X-Goog-Signature=example"
                                           }
                                         }
                                         """

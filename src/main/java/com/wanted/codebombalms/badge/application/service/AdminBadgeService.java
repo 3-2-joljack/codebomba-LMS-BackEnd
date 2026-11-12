@@ -108,7 +108,7 @@ public class AdminBadgeService implements AdminBadgeUseCase {
                             badgeImageStoragePort.delete(objectName);
                         } catch (Exception e) {
                             log.error(
-                                    "뱃지 등록 롤백 후 GCS 이미지 삭제에 실패했습니다. objectName={}",
+                                    "뱃지 등록 롤백 후 S3 이미지 삭제에 실패했습니다. objectName={}",
                                     objectName,
                                     e
                             );

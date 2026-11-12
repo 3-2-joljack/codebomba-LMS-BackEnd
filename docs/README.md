@@ -38,7 +38,7 @@ Code-Bomba-LMS는 강좌, 강의, 문제 풀이, 제출, 학습 진행률, 운�
 - Gradle
 - JWT
 - Springdoc OpenAPI Swagger
-- Google Cloud Storage
+- AWS S3
 - Spring Mail
 - WebFlux
 - H2 Test Database
@@ -174,7 +174,7 @@ http://localhost:8080/swagger-ui/index.html
 
 ## 실행 전 준비 사항
 
-이 프로젝트는 로컬 실행 시 DB, Redis, JWT, Mail, GCP Storage 관련 설정이 필요합니다.
+이 프로젝트는 로컬 실행 시 DB, Redis, JWT, Mail, AWS S3 관련 설정이 필요합니다.
 
 로컬 환경 설정 파일은 Git에서 제외되어 있으므로 직접 생성해야 합니다.
 
@@ -238,13 +238,9 @@ fastapi:
 chat:
   max-history-messages: 20
 
-gcp:
-  project-id: your_project_id
-  storage:
-    bucket: your_bucket_name
-    dataset-prefix: problem_dataset
-  credentials:
-    location: file:./secrets/gcp-storage-key.json
+storage:
+  bucket: your_s3_bucket_name
+  region: ap-northeast-2
 
 code:
   runner:
@@ -273,7 +269,7 @@ jwt.refresh-expiration=1209600000
 
 `application-*.properties`, `application-*.yml` 형식의 파일은 모두 gitignore 처리되어 있습니다.
 
-DB 비밀번호, JWT Secret, API Key, Mail App Password, GCP 인증 정보 등 민감한 정보는 로컬 설정 파일에만 작성하고 절대 커밋하지 않습니다.
+DB 비밀번호, JWT Secret, API Key, Mail App Password, AWS 자격 증명 등 민감한 정보는 로컬 설정 파일에만 작성하고 절대 커밋하지 않습니다.
 
 ## 실행 방법
 

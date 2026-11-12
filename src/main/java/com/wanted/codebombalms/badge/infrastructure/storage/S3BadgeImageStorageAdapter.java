@@ -1,29 +1,27 @@
 package com.wanted.codebombalms.badge.infrastructure.storage;
 
-import com.google.cloud.storage.BlobId;
-import com.google.cloud.storage.BlobInfo;
-import com.google.cloud.storage.Storage;
 import com.wanted.codebombalms.badge.application.port.BadgeImageStoragePort;
 import com.wanted.codebombalms.badge.exception.BadgeErrorCode;
 import com.wanted.codebombalms.global.domain.common.error.exception.ExternalServiceException;
 import com.wanted.codebombalms.global.domain.common.error.exception.ValidationException;
 import com.wanted.codebombalms.global.infrastructure.cache.CacheNames;
-import com.wanted.codebombalms.global.infrastructure.storage.GcpStorageClientFactory;
-import com.wanted.codebombalms.global.infrastructure.storage.GcpStorageProperties;
+import com.wanted.codebombalms.global.infrastructure.storage.ObjectStorage;
+import com.wanted.codebombalms.global.infrastructure.storage.ObjectStorageProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
+
 @Slf4j
 @Component
-public class GcsBadgeImageStorageAdapter implements BadgeImageStoragePort {
+public class S3BadgeImageStorageAdapter implements BadgeImageStoragePort {
 
     private static final long MAX_FILE_SIZE = 5 * 1024 * 1024;
-    private static final long ACCESS_URL_DURATION_MINUTES = 10;
+    private static final Duration ACCESS_URL_DURATION = Duration.ofMinutes(10);
 
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "image/jpeg",
@@ -31,17 +29,15 @@ public class GcsBadgeImageStorageAdapter implements BadgeImageStoragePort {
             "image/webp"
     );
 
-    private final GcpStorageProperties properties;
-    private final GcpStorageClientFactory storageClientFactory;
+    private final ObjectStorageProperties properties;
+    private final ObjectStorage objectStorage;
 
-    private volatile Storage storage;
-
-    public GcsBadgeImageStorageAdapter(
-            GcpStorageProperties properties,
-            GcpStorageClientFactory storageClientFactory
+    public S3BadgeImageStorageAdapter(
+            ObjectStorageProperties properties,
+            ObjectStorage objectStorage
     ) {
         this.properties = properties;
-        this.storageClientFactory = storageClientFactory;
+        this.objectStorage = objectStorage;
     }
 
     @Override
@@ -59,21 +55,13 @@ public class GcsBadgeImageStorageAdapter implements BadgeImageStoragePort {
         );
 
         String sanitizedFileName = sanitizeFileName(originalFileName);
-        String objectName = buildObjectName(
+        String objectName = ObjectStorageProperties.objectKey(
+                properties.getBadgeImagePrefix(),
                 UUID.randomUUID() + "-" + sanitizedFileName
         );
 
-        BlobInfo blobInfo = BlobInfo.newBuilder(
-                        BlobId.of(
-                                properties.getStorage().getBucket(),
-                                objectName
-                        )
-                )
-                .setContentType(contentType)
-                .build();
-
         try {
-            getStorage().create(blobInfo, imageBytes);
+            objectStorage.put(objectName, contentType, imageBytes);
 
             return new StoredBadgeImage(
                     sanitizedFileName,
@@ -81,12 +69,10 @@ public class GcsBadgeImageStorageAdapter implements BadgeImageStoragePort {
                     contentType,
                     fileSize
             );
-        } catch (ExternalServiceException e) {
-            throw e;
         } catch (Exception e) {
             log.error(
-                    "GCS badge image upload failed. bucket={}, objectName={}, contentType={}, fileSize={}",
-                    properties.getStorage().getBucket(),
+                    "S3 badge image upload failed. bucket={}, objectName={}, contentType={}, fileSize={}",
+                    properties.getBucket(),
                     objectName,
                     contentType,
                     fileSize,
@@ -114,24 +100,8 @@ public class GcsBadgeImageStorageAdapter implements BadgeImageStoragePort {
             );
         }
 
-        return createAccessUrl(objectName);
-    }
-
-    private String createAccessUrl(String objectName) {
         try {
-            BlobInfo blobInfo = BlobInfo.newBuilder(
-                    properties.getStorage().getBucket(),
-                    objectName
-            ).build();
-
-            return getStorage()
-                    .signUrl(
-                            blobInfo,
-                            ACCESS_URL_DURATION_MINUTES,
-                            TimeUnit.MINUTES,
-                            Storage.SignUrlOption.withV4Signature()
-                    )
-                    .toString();
+            return objectStorage.presignedGetUrl(objectName, ACCESS_URL_DURATION);
         } catch (Exception e) {
             throw new ExternalServiceException(
                     BadgeErrorCode.BADGE_IMAGE_ACCESS_URL_FAILED,
@@ -153,12 +123,7 @@ public class GcsBadgeImageStorageAdapter implements BadgeImageStoragePort {
         }
 
         try {
-            getStorage().delete(
-                    BlobId.of(
-                            properties.getStorage().getBucket(),
-                            objectName
-                    )
-            );
+            objectStorage.delete(objectName);
         } catch (Exception e) {
             throw new ExternalServiceException(
                     BadgeErrorCode.BADGE_IMAGE_DELETE_FAILED,
@@ -166,7 +131,6 @@ public class GcsBadgeImageStorageAdapter implements BadgeImageStoragePort {
             );
         }
     }
-    
 
     private void validateImage(
             String originalFileName,
@@ -190,54 +154,9 @@ public class GcsBadgeImageStorageAdapter implements BadgeImageStoragePort {
         }
     }
 
-    private String buildObjectName(String fileName) {
-        String prefix = normalizePrefix(
-                properties.getStorage().getBadgeImagePrefix()
-        );
-
-        if (prefix.isBlank()) {
-            return fileName;
-        }
-
-        return prefix + "/" + fileName;
-    }
-
-    private String normalizePrefix(String prefix) {
-        if (prefix == null) {
-            return "";
-        }
-
-        return prefix
-                .replaceAll("^/+", "")
-                .replaceAll("/+$", "");
-    }
-
     private String sanitizeFileName(String originalFileName) {
         return originalFileName
                 .replace("\\", "_")
                 .replace("/", "_");
-    }
-
-    private Storage getStorage(){
-        if (storage == null) {
-            synchronized (this) {
-                if (storage == null) {
-                    storage = createStorage();
-                }
-            }
-        }
-
-        return storage;
-    }
-
-    private Storage createStorage() {
-        try {
-            return storageClientFactory.create();
-        } catch (Exception e) {
-            throw new ExternalServiceException(
-                    BadgeErrorCode.BADGE_IMAGE_ACCESS_URL_FAILED,
-                    e
-            );
-        }
     }
 }

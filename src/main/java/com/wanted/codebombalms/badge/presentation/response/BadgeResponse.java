@@ -19,7 +19,7 @@ public record BadgeResponse(
         @Schema(description = "배지 지급 기준 누적 포인트", example = "10")
         Integer requiredPoint,
 
-        @Schema(description = "배지 이미지 접근 URL", example = "https://storage.googleapis.com/codebombalms/badge_image/example.png?X-Goog-Signature=example")
+        @Schema(description = "배지 이미지 접근 URL", example = "https://codebomba-lms.s3.ap-northeast-2.amazonaws.com/badge_image/example.png?X-Goog-Signature=example")
         String imageUrl,
 
         @Schema(description = "배지 상태", example = "ACTIVE", allowableValues = {"ACTIVE", "INACTIVE"})

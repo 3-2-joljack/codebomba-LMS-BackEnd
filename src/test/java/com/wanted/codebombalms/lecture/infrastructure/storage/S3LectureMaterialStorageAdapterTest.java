@@ -3,40 +3,36 @@ package com.wanted.codebombalms.lecture.infrastructure.storage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.google.cloud.storage.Blob;
-import com.google.cloud.storage.BlobInfo;
-import com.google.cloud.storage.Storage;
 import com.wanted.codebombalms.global.domain.common.error.exception.ExternalServiceException;
 import com.wanted.codebombalms.global.domain.common.error.exception.ValidationException;
-import com.wanted.codebombalms.global.infrastructure.storage.GcpStorageClientFactory;
-import com.wanted.codebombalms.global.infrastructure.storage.GcpStorageProperties;
+import com.wanted.codebombalms.global.infrastructure.storage.ObjectStorage;
+import com.wanted.codebombalms.global.infrastructure.storage.ObjectStorageProperties;
 import com.wanted.codebombalms.lecture.application.port.LectureMaterialStoragePort.StoredLectureMaterial;
 import com.wanted.codebombalms.lecture.domain.exception.LectureErrorCode;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 
-@DisplayName("GcsLectureMaterialStorageAdapter test")
-class GcsLectureMaterialStorageAdapterTest {
+@DisplayName("S3LectureMaterialStorageAdapter test")
+class S3LectureMaterialStorageAdapterTest {
+
+    private final ObjectStorage objectStorage = mock(ObjectStorage.class);
+    private final S3LectureMaterialStorageAdapter adapter =
+            new S3LectureMaterialStorageAdapter(new ObjectStorageProperties(), objectStorage);
 
     @Test
-    void upload_preservesOriginalKoreanFileNameForDisplayAndSanitizesStoredFileName() throws Exception {
-        Storage storage = mock(Storage.class);
-        GcpStorageClientFactory storageClientFactory = mock(GcpStorageClientFactory.class);
-        GcpStorageProperties properties = createProperties("codebombalms");
-        GcsLectureMaterialStorageAdapter adapter =
-                new GcsLectureMaterialStorageAdapter(properties, storageClientFactory);
-        byte[] content = "lecture material".getBytes();
+    void upload_preservesOriginalKoreanFileNameForDisplayAndSanitizesStoredFileName() {
+        byte[] content = "lecture material".getBytes(StandardCharsets.UTF_8);
         String originalFileName = "자료 1강.pdf";
 
-        when(storageClientFactory.create()).thenReturn(storage);
-        when(storage.create(any(BlobInfo.class), any(byte[].class))).thenReturn(mock(Blob.class));
-
         StoredLectureMaterial storedMaterial = adapter.upload(
                 originalFileName,
                 "application/pdf",
@@ -44,35 +40,7 @@ class GcsLectureMaterialStorageAdapterTest {
                 content
         );
 
-        ArgumentCaptor<BlobInfo> blobInfoCaptor = ArgumentCaptor.forClass(BlobInfo.class);
-        verify(storage).create(blobInfoCaptor.capture(), any(byte[].class));
-
-        assertThat(storedMaterial.originalFileName()).isEqualTo(originalFileName);
-        assertThat(storedMaterial.storedFileName()).endsWith("____1_.pdf");
-        assertThat(storedMaterial.filePath()).startsWith("lecture_materials/");
-        assertThat(blobInfoCaptor.getValue().getName()).isEqualTo(storedMaterial.filePath());
-    }
-
-    @Test
-    void upload_preservesOriginalKoreanFileNameWithUnicodeEscapes() throws Exception {
-        Storage storage = mock(Storage.class);
-        GcpStorageClientFactory storageClientFactory = mock(GcpStorageClientFactory.class);
-        GcpStorageProperties properties = createProperties("codebombalms");
-        GcsLectureMaterialStorageAdapter adapter =
-                new GcsLectureMaterialStorageAdapter(properties, storageClientFactory);
-        byte[] content = "lecture material".getBytes(StandardCharsets.UTF_8);
-        String originalFileName = "\uC790\uB8CC 1\uAC15.pdf";
-
-        when(storageClientFactory.create()).thenReturn(storage);
-        when(storage.create(any(BlobInfo.class), any(byte[].class))).thenReturn(mock(Blob.class));
-
-        StoredLectureMaterial storedMaterial = adapter.upload(
-                originalFileName,
-                "application/pdf",
-                content.length,
-                content
-        );
-
+        verify(objectStorage).put(eq(storedMaterial.filePath()), eq("application/pdf"), eq(content));
         assertThat(storedMaterial.originalFileName()).isEqualTo(originalFileName);
         assertThat(storedMaterial.storedFileName()).endsWith("___1_.pdf");
         assertThat(storedMaterial.filePath()).startsWith("lecture_materials/");
@@ -80,7 +48,6 @@ class GcsLectureMaterialStorageAdapterTest {
 
     @Test
     void upload_throwsValidation_whenOriginalFileNameIsBlank() {
-        GcsLectureMaterialStorageAdapter adapter = new GcsLectureMaterialStorageAdapter(null, null);
         byte[] content = "lecture material".getBytes(StandardCharsets.UTF_8);
 
         assertThatThrownBy(() -> adapter.upload(
@@ -96,7 +63,6 @@ class GcsLectureMaterialStorageAdapterTest {
 
     @Test
     void upload_throwsValidation_whenContentTypeIsNotAllowed() {
-        GcsLectureMaterialStorageAdapter adapter = new GcsLectureMaterialStorageAdapter(null, null);
         byte[] content = "lecture material".getBytes(StandardCharsets.UTF_8);
 
         assertThatThrownBy(() -> adapter.upload(
@@ -112,7 +78,6 @@ class GcsLectureMaterialStorageAdapterTest {
 
     @Test
     void upload_throwsValidation_whenFileSizeExceedsLimit() {
-        GcsLectureMaterialStorageAdapter adapter = new GcsLectureMaterialStorageAdapter(null, null);
         byte[] content = "lecture material".getBytes(StandardCharsets.UTF_8);
 
         assertThatThrownBy(() -> adapter.upload(
@@ -128,7 +93,6 @@ class GcsLectureMaterialStorageAdapterTest {
 
     @Test
     void upload_throwsValidation_whenContentIsEmpty() {
-        GcsLectureMaterialStorageAdapter adapter = new GcsLectureMaterialStorageAdapter(null, null);
         byte[] content = new byte[0];
 
         assertThatThrownBy(() -> adapter.upload(
@@ -143,17 +107,10 @@ class GcsLectureMaterialStorageAdapterTest {
     }
 
     @Test
-    void upload_throwsExternalServiceException_whenStorageCreateFails() throws Exception {
-        Storage storage = mock(Storage.class);
-        GcpStorageClientFactory storageClientFactory = mock(GcpStorageClientFactory.class);
-        GcpStorageProperties properties = createProperties("codebombalms");
-        GcsLectureMaterialStorageAdapter adapter =
-                new GcsLectureMaterialStorageAdapter(properties, storageClientFactory);
+    void upload_throwsExternalServiceException_whenStoragePutFails() {
         byte[] content = "lecture material".getBytes(StandardCharsets.UTF_8);
-
-        when(storageClientFactory.create()).thenReturn(storage);
-        when(storage.create(any(BlobInfo.class), any(byte[].class)))
-                .thenThrow(new RuntimeException("upload failed"));
+        doThrow(new RuntimeException("upload failed"))
+                .when(objectStorage).put(anyString(), anyString(), any(byte[].class));
 
         assertThatThrownBy(() -> adapter.upload(
                 "guide.pdf",
@@ -166,9 +123,29 @@ class GcsLectureMaterialStorageAdapterTest {
                 .isEqualTo(LectureErrorCode.LECTURE_MATERIAL_UPLOAD_FAILED);
     }
 
-    private GcpStorageProperties createProperties(String bucket) {
-        GcpStorageProperties properties = new GcpStorageProperties();
-        properties.getStorage().setBucket(bucket);
-        return properties;
+    @Test
+    void generateDownloadUrl_requestsAttachmentDispositionWithOriginalFileName() {
+        when(objectStorage.presignedDownloadUrl(anyString(), any(Duration.class), anyString()))
+                .thenReturn("https://signed.example/guide.pdf");
+
+        String url = adapter.generateDownloadUrl("lecture_materials/abc_guide.pdf", "가이드.pdf");
+
+        assertThat(url).isEqualTo("https://signed.example/guide.pdf");
+        verify(objectStorage).presignedDownloadUrl(
+                eq("lecture_materials/abc_guide.pdf"),
+                eq(Duration.ofMinutes(1)),
+                org.mockito.ArgumentMatchers.startsWith("attachment;")
+        );
+    }
+
+    @Test
+    void generateDownloadUrl_throwsExternalServiceException_whenPresignFails() {
+        when(objectStorage.presignedDownloadUrl(anyString(), any(Duration.class), anyString()))
+                .thenThrow(new RuntimeException("presign failed"));
+
+        assertThatThrownBy(() -> adapter.generateDownloadUrl("lecture_materials/a.pdf", "a.pdf"))
+                .isInstanceOf(ExternalServiceException.class)
+                .extracting("errorCode")
+                .isEqualTo(LectureErrorCode.LECTURE_MATERIAL_DOWNLOAD_URL_FAILED);
     }
 }
